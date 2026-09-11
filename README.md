@@ -28,8 +28,8 @@
 | Version | Description | Download |
 |---------|-------------|----------|
 | **Browser extension** | Shows usage in browser toolbar | [Chrome Web Store](https://chromewebstore.google.com/detail/claude-meter/hdoipmanokibeilfnibempaiaeilkpfe) |
-| **Portable exe** | Single file, no install needed | [Releases](https://github.com/stf-lab/Claude-Meter/releases) |
-| **Installer** | Full setup with auto-updates | [Releases](https://github.com/stf-lab/Claude-Meter/releases) |
+| **Portable exe** | Single file, no install needed | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/portable) |
+| **Installer** | Full setup with auto-updates | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/install) |
 
 ## Quick Start
 
@@ -39,14 +39,14 @@
 3. Usage percentage appears on the extension icon
 
 ### Windows Tray App
-1. Download the latest `ClaudeMeter_portable_vX.X.X.exe` from [Releases](https://github.com/stf-lab/Claude-Meter/releases/latest)
+1. Download the latest `ClaudeMeter_portable_vX.X.X.exe` from [portable/](https://github.com/stf-lab/Claude-Meter/tree/main/portable)
 2. Place it in a permanent folder and run it
 3. Right-click tray icon > **Log in to Claude**
 4. Install the browser extension when prompted (for automatic login)
 5. Done. Starts with Windows automatically
 
 ### Installed Version
-1. Download the latest `ClaudeMeter_Setup_vX.X.X.exe` from [Releases](https://github.com/stf-lab/Claude-Meter/releases/latest)
+1. Download the latest `ClaudeMeter_Setup_vX.X.X.exe` from [install/](https://github.com/stf-lab/Claude-Meter/tree/main/install)
 2. Run the installer (downloads Python automatically if not installed)
 3. Right-click tray icon > **Log in to Claude**
 
