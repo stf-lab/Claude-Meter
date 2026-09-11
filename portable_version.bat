@@ -49,6 +49,7 @@ echo.
   --enable-plugin=tk-inter ^
   --include-package=curl_cffi ^
   --include-package-data=curl_cffi ^
+  --include-package-data=certifi ^
   --include-data-dir="%~dp0extension=extension" ^
   --windows-icon-from-ico="%~dp0icon.ico" ^
   --company-name="Stefan Savin" ^

@@ -1,0 +1,612 @@
+diff --git a/.gitignore b/.gitignore
+index 146206d..4b9e0c8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -15,6 +15,10 @@ build_nuitka/
+ # Inno Setup output
+ Output/
+ 
++# Release binaries: published on GitHub Releases, not committed
++install/*.exe
++portable/*.exe
++
+ # User config
+ .claude_meter.json
+ .claude_meter.log
+diff --git a/README.md b/README.md
+index c7882ee..d0d47ca 100644
+--- a/README.md
++++ b/README.md
+@@ -28,8 +28,8 @@
+ | Version | Description | Download |
+ |---------|-------------|----------|
+ | **Browser extension** | Shows usage in browser toolbar | [Chrome Web Store](https://chromewebstore.google.com/detail/claude-meter/hdoipmanokibeilfnibempaiaeilkpfe) |
+-| **Portable exe** | Single file, no install needed | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/portable) |
+-| **Installer** | Full setup with auto-updates | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/install) |
++| **Portable exe** | Single file, no install needed | [Latest release](https://github.com/stf-lab/Claude-Meter/releases/latest) |
++| **Installer** | Full setup; downloads Python if needed | [Latest release](https://github.com/stf-lab/Claude-Meter/releases/latest) |
+ 
+ ## Quick Start
+ 
+@@ -39,14 +39,14 @@
+ 3. Usage percentage appears on the extension icon
+ 
+ ### Windows Tray App
+-1. Download the latest `ClaudeMeter_portable_vX.X.X.exe` from [portable/](https://github.com/stf-lab/Claude-Meter/tree/main/portable)
++1. Download `ClaudeMeter_portable_vX.Y.Z.exe` from the [latest release](https://github.com/stf-lab/Claude-Meter/releases/latest)
+ 2. Place it in a permanent folder and run it
+ 3. Right-click tray icon > **Log in to Claude**
+ 4. Install the browser extension when prompted (for automatic login)
+ 5. Done. Starts with Windows automatically
+ 
+ ### Installed Version
+-1. Download the latest `ClaudeMeter_Setup_vX.X.X.exe` from [install/](https://github.com/stf-lab/Claude-Meter/tree/main/install)
++1. Download `ClaudeMeter_Setup_vX.Y.Z.exe` from the [latest release](https://github.com/stf-lab/Claude-Meter/releases/latest)
+ 2. Run the installer (downloads Python automatically if not installed)
+ 3. Right-click tray icon > **Log in to Claude**
+ 
+@@ -55,7 +55,7 @@
+ 
+ - The browser extension reads the `sessionKey` cookie from claude.ai and fetches usage data from the undocumented `/api/organizations/{id}/usage` endpoint
+ - The tray app uses [curl_cffi](https://github.com/yifeikong/curl_cffi) to impersonate Chrome's TLS fingerprint, bypassing Cloudflare
+-- The extension sends the sessionKey to the tray app via a local HTTP server on `127.0.0.1:27182`
++- The extension sends the sessionKey (and the organization selected in claude.ai) to the tray app via a local HTTP server on `127.0.0.1:27182`; the server only accepts requests from browser extensions
+ - Session keys persist across restarts, lasting days to weeks
+ 
+ 
+@@ -71,17 +71,22 @@ Requires [Inno Setup 7](https://jrsoftware.org/isinfo.php):
+ ```
+ installed_version.bat
+ ```
+-Creates `install\ClaudeMeter_Setup_vX.X.X.exe`
++Creates `install\ClaudeMeter_Setup_vX.Y.Z.exe`
+ 
+ ### Build the Portable Exe
+ Requires a C compiler (MSVC recommended):
+ ```
+ portable_version.bat
+ ```
+-Creates `portable\ClaudeMeter_portable_vX.X.X.exe`
++Creates `portable\ClaudeMeter_portable_vX.Y.Z.exe`
+ 
+ Best run from the "x64 Native Tools Command Prompt for VS 2022" for MSVC. Nuitka downloads its own compiler if MSVC is not found.
+ 
++### Publishing a Release
++The built exes are not committed to git. After building both:
++1. Create a GitHub Release tagged `vX.Y.Z`
++2. Attach `install\ClaudeMeter_Setup_vX.Y.Z.exe` and `portable\ClaudeMeter_portable_vX.Y.Z.exe`
++
+ 
+ ## Project Structure
+ 
+@@ -96,6 +101,7 @@ extension/           Browser extension source
+   background.js      Polls usage, updates icon, sends key to tray app
+   popup.html/js      Extension popup with progress bar
+   manifest.json      Extension manifest (MV3)
++  icons/             Static extension icons (16, 48, 128 px)
+ engine.bat           Install engine (called by installer, not run directly)
+ installed_version.bat  Build the installer Setup.exe
+ portable_version.bat   Build the portable single exe
+@@ -106,7 +112,7 @@ installer.iss        Inno Setup script
+ 
+ ## Privacy
+ 
+-- Only communicates with claude.ai
++- The app and extension only communicate with claude.ai (the installer also downloads Python and packages from python.org and PyPI when needed)
+ - Session key stored locally (`~/.claude_meter.json`)
+ - Local auth server listens only on 127.0.0.1 (not accessible from the network)
+ - No data collected, no analytics, no tracking
+@@ -114,7 +120,7 @@ installer.iss        Inno Setup script
+ 
+ ## Windows SmartScreen / Antivirus
+ 
+-Unsigned executables trigger SmartScreen on first run: click "More info" > "Run anyway". This is normal for unsigned software. Code signing via [SignPath](https://signpath.io) is planned.
++Unsigned executables trigger SmartScreen on first run: click "More info" > "Run anyway". This is normal for unsigned software. An application for free open-source code signing through [SignPath](https://signpath.io) has been submitted.
+ 
+ 
+ ## License
+diff --git a/browser.py b/browser.py
+index 6958ccf..4a667b6 100644
+--- a/browser.py
++++ b/browser.py
+@@ -18,33 +18,51 @@ AUTH_PORT = 27182
+ EXTENSION_URL = "https://chromewebstore.google.com/detail/claude-meter/hdoipmanokibeilfnibempaiaeilkpfe"
+ 
+ 
++MAX_BODY = 4096
++
++
+ class _AuthHandler(BaseHTTPRequestHandler):
++    def _extension_origin(self):
++        """Only browser extensions may talk to the auth server.
++        Web pages always send an https:// Origin on cross-site POSTs, so they are refused."""
++        origin = self.headers.get("Origin", "")
++        return origin if origin.startswith("chrome-extension://") else None
++
+     def do_POST(self):
+-        if self.path == "/auth":
+-            length = int(self.headers.get("Content-Length", 0))
+-            body = self.rfile.read(length).decode()
++        origin = self._extension_origin()
++        if self.path == "/auth" and origin:
+             try:
+-                data = json.loads(body)
+-                sk = data.get("sk", "")
+-                if sk and len(sk) > 20:
+-                    self.server.session_key = sk
+-                    if self.server.on_key_received:
+-                        self.server.on_key_received(sk)
+-                    self.send_response(200)
+-                    self.send_header("Access-Control-Allow-Origin", "*")
+-                    self.send_header("Content-Type", "text/plain")
+-                    self.end_headers()
+-                    self.wfile.write(b"OK")
+-                    log.info(f"Auth server: received key ({len(sk)} chars)")
+-                    return
++                length = int(self.headers.get("Content-Length", 0))
++                if 0 < length <= MAX_BODY:
++                    data = json.loads(self.rfile.read(length).decode())
++                    sk = data.get("sk", "")
++                    org = data.get("org") or ""
++                    if isinstance(sk, str) and len(sk) > 20 and isinstance(org, str):
++                        self.server.session_key = sk
++                        self.server.org_id = org
++                        if self.server.on_key_received:
++                            self.server.on_key_received(sk, org)
++                        self.send_response(200)
++                        self.send_header("Access-Control-Allow-Origin", origin)
++                        self.send_header("Content-Type", "text/plain")
++                        self.end_headers()
++                        self.wfile.write(b"OK")
++                        return
+             except Exception as e:
+                 log.info(f"Auth parse error: {e}")
+-        self.send_response(400)
++        elif self.path == "/auth":
++            log.info(f"Auth server: refused request from origin {self.headers.get('Origin', '(none)')!r}")
++        self.send_response(403 if not origin else 400)
+         self.end_headers()
+ 
+     def do_OPTIONS(self):
+-        self.send_response(200)
+-        self.send_header("Access-Control-Allow-Origin", "*")
++        origin = self._extension_origin()
++        if not origin:
++            self.send_response(403)
++            self.end_headers()
++            return
++        self.send_response(204)
++        self.send_header("Access-Control-Allow-Origin", origin)
+         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+         self.end_headers()
+@@ -62,6 +80,7 @@ class AuthServer:
+         try:
+             self._server = HTTPServer(("127.0.0.1", AUTH_PORT), _AuthHandler)
+             self._server.session_key = None
++            self._server.org_id = ""
+             self._server.on_key_received = self.on_key_callback
+             threading.Thread(target=self._server.serve_forever, daemon=True).start()
+             log.info(f"Auth server started on port {AUTH_PORT}")
+@@ -73,19 +92,19 @@ class AuthServer:
+             self._server.shutdown()
+ 
+ 
+-def _verify_key(sk):
++def _verify_key(sk, verify=True):
+     try:
+         from curl_cffi import requests as cf
+         test = cf.get("https://claude.ai/api/organizations",
+                       cookies={"sessionKey": sk}, impersonate="chrome",
+-                      timeout=10, verify=False)
++                      timeout=10, verify=verify)
+         return test.status_code == 200
+     except Exception as e:
+         log.info(f"Verify error: {e}")
+         return False
+ 
+ 
+-def _login_tkinter(auth_server):
++def _login_tkinter(auth_server, verify=True):
+     """Login dialog using tkinter."""
+     import tkinter as tk
+     from tkinter import ttk, messagebox
+@@ -156,7 +175,7 @@ def _login_tkinter(auth_server):
+             return
+         status_var.set("Verifying...")
+         root.update()
+-        if _verify_key(val):
++        if _verify_key(val, verify):
+             result["cookies"] = {"sessionKey": val}
+             root.destroy()
+         elif val.startswith("sk-ant-"):
+@@ -175,8 +194,9 @@ def _login_tkinter(auth_server):
+     def check_auth():
+         if auth_server and auth_server._server and auth_server._server.session_key:
+             sk = auth_server._server.session_key
+-            if _verify_key(sk):
++            if _verify_key(sk, verify):
+                 result["cookies"] = {"sessionKey": sk}
++                result["org"] = auth_server._server.org_id
+                 root.destroy()
+                 return
+             else:
+@@ -187,10 +207,10 @@ def _login_tkinter(auth_server):
+     root.after(500, check_auth)
+     webbrowser.open("https://claude.ai")
+     root.mainloop()
+-    return result.get("cookies")
++    return result.get("cookies"), result.get("org") or ""
+ 
+ 
+-def _login_powershell(auth_server):
++def _login_powershell(auth_server, verify=True):
+     """Login dialog using PowerShell (fallback when no tkinter)."""
+     webbrowser.open("https://claude.ai")
+ 
+@@ -210,18 +230,19 @@ Write-Output $key
+             capture_output=True, text=True, timeout=300
+         )
+         key = proc.stdout.strip()
+-        if key and len(key) > 10 and _verify_key(key):
+-            return {"sessionKey": key}
++        if key and len(key) > 10 and _verify_key(key, verify):
++            return {"sessionKey": key}, ""
+     except Exception as e:
+         log.info(f"PowerShell login error: {e}")
+-    return None
++    return None, ""
+ 
+ 
+-def login_and_get_cookies(auth_server=None):
+-    """Login dialog - tries tkinter first, falls back to PowerShell."""
++def login_and_get_cookies(auth_server=None, verify=True):
++    """Login dialog - tries tkinter first, falls back to PowerShell.
++    Returns (cookies or None, org_id or "")."""
+     try:
+         import tkinter
+-        return _login_tkinter(auth_server)
++        return _login_tkinter(auth_server, verify)
+     except ImportError:
+         log.info("tkinter not available, using PowerShell dialog")
+-        return _login_powershell(auth_server)
++        return _login_powershell(auth_server, verify)
+diff --git a/claude_meter.py b/claude_meter.py
+index a46e599..c059f4c 100644
+--- a/claude_meter.py
++++ b/claude_meter.py
+@@ -22,7 +22,7 @@ import pystray
+ from PIL import Image, ImageDraw, ImageFont
+ from curl_cffi import requests as cf_requests
+ 
+-from browser import login_and_get_cookies, AuthServer
++from browser import login_and_get_cookies, AuthServer, _verify_key
+ from config import Config
+ 
+ logging.basicConfig(
+@@ -52,20 +52,25 @@ class ClaudeMeter:
+         self.auth_server = AuthServer(on_key_callback=self._on_auto_key)
+         self.auth_server.start()
+ 
+-    def _on_auto_key(self, sk):
+-        """Called when extension sends a fresh sessionKey."""
+-        log.info(f"Auto-key received ({len(sk)} chars)")
++    def _apply_login(self, cookies, org=""):
++        """Store a verified session and reset error state."""
++        self.config.cookies = cookies
++        self.config.org_id = org
++        self._org_id = org
++        self._fail_count = 0
++        self._session_expired_notified = False
++        self.config.save()
++
++    def _on_auto_key(self, sk, org=""):
++        """Called when extension sends a sessionKey (and the active org, if known)."""
++        # The extension re-sends every 2 minutes; skip if nothing changed.
++        if (self.config.cookies.get("sessionKey") == sk
++                and (not org or org == self._org_id) and self._fail_count == 0):
++            return
++        log.info(f"Auto-key received ({len(sk)} chars, org {'set' if org else 'not set'})")
+         try:
+-            test = cf_requests.get("https://claude.ai/api/organizations",
+-                                   cookies={"sessionKey": sk}, impersonate="chrome",
+-                                   timeout=10, verify=False)
+-            if test.status_code == 200:
+-                self.config.cookies = {"sessionKey": sk}
+-                self.config.org_id = ""
+-                self._org_id = ""
+-                self._fail_count = 0
+-                self._session_expired_notified = False
+-                self.config.save()
++            if _verify_key(sk, self.config.verify_tls):
++                self._apply_login({"sessionKey": sk}, org)
+                 log.info("Auto-key verified and saved")
+                 self._start_polling()
+                 threading.Thread(target=self._poll_once, daemon=True).start()
+@@ -117,7 +122,7 @@ class ClaudeMeter:
+                 f"https://claude.ai/api/{path}",
+                 cookies=self.config.cookies,
+                 impersonate="chrome",
+-                verify=False,
++                verify=self.config.verify_tls,
+                 timeout=15,
+             )
+             return {"status": r.status_code, "body": r.text}
+@@ -125,6 +130,15 @@ class ClaudeMeter:
+             log.info(f"API error: {e}")
+             return None
+ 
++    @staticmethod
++    def _pick_org(orgs):
++        """Pick the claude.ai (chat) org; API-only orgs have no usage data.
++        The extension sends the active org when available, so this is the fallback."""
++        for o in orgs:
++            if isinstance(o, dict) and "chat" in (o.get("capabilities") or []):
++                return o.get("uuid", "")
++        return orgs[0].get("uuid", "") if isinstance(orgs[0], dict) else ""
++
+     def _ensure_org_id(self):
+         if self._org_id:
+             return self._org_id
+@@ -133,7 +147,7 @@ class ClaudeMeter:
+             try:
+                 orgs = json.loads(resp["body"])
+                 if orgs and isinstance(orgs, list):
+-                    self._org_id = orgs[0].get("uuid", "")
++                    self._org_id = self._pick_org(orgs)
+                     self.config.org_id = self._org_id
+                     self.config.save()
+                     return self._org_id
+@@ -275,15 +289,10 @@ class ClaudeMeter:
+             for i in range(15):
+                 if self.auth_server._server.session_key:
+                     sk = self.auth_server._server.session_key
++                    org = self.auth_server._server.org_id
+                     self.auth_server._server.session_key = None
+-                    from browser import _verify_key
+-                    if _verify_key(sk):
+-                        self.config.cookies = {"sessionKey": sk}
+-                        self.config.org_id = ""
+-                        self._org_id = ""
+-                        self._fail_count = 0
+-                        self._session_expired_notified = False
+-                        self.config.save()
++                    if _verify_key(sk, self.config.verify_tls):
++                        self._apply_login({"sessionKey": sk}, org)
+                         log.info("Login via extension succeeded")
+                         self._start_polling()
+                         self._poll_once()
+@@ -293,14 +302,10 @@ class ClaudeMeter:
+             log.info("Extension didn't respond, showing dialog")
+ 
+         # Fall back to dialog
+-        cookies = login_and_get_cookies(auth_server=self.auth_server)
++        cookies, org = login_and_get_cookies(auth_server=self.auth_server,
++                                             verify=self.config.verify_tls)
+         if cookies:
+-            self.config.cookies = cookies
+-            self.config.org_id = ""
+-            self._org_id = ""
+-            self._fail_count = 0
+-            self._session_expired_notified = False
+-            self.config.save()
++            self._apply_login(cookies, org)
+             log.info(f"Login: saved {len(cookies)} cookies")
+             self._start_polling()
+             self._poll_once()
+@@ -315,7 +320,8 @@ class ClaudeMeter:
+         self._org_id = ""
+         self.config.save()
+         self.pct = -1
+-        self._polling_started = False
++        # The poll loop keeps running and shows "Log in" until a new login;
++        # resetting _polling_started here started a second loop on re-login.
+         self._set_status("Logged out")
+         self._refresh()
+ 
+@@ -327,6 +333,7 @@ class ClaudeMeter:
+         lines.append(f"Cookies: {len(self.config.cookies)} cookies, sessionKey={'yes' if self.config.logged_in else 'no'}")
+         lines.append(f"Org ID: {self._org_id or 'NOT SET'}")
+         lines.append(f"Status: {self.status_text}")
++        lines.append(f"TLS verification: {'on' if self.config.verify_tls else 'OFF'}")
+         lines.append("\n--- API test ---\n")
+         resp = self._api_get("organizations")
+         if resp:
+@@ -336,8 +343,8 @@ class ClaudeMeter:
+                 try:
+                     orgs = json.loads(resp["body"])
+                     if orgs:
+-                        oid = orgs[0].get("uuid", "")
+-                        lines.append(f"\nOrg: {oid}")
++                        oid = self._org_id or self._pick_org(orgs)
++                        lines.append(f"\nOrgs on account: {len(orgs)}, using: {oid}")
+                         for ep in ["usage", "chat_conversations"]:
+                             r2 = self._api_get(f"organizations/{oid}/{ep}")
+                             if r2:
+diff --git a/config.py b/config.py
+index 5db8454..738aea6 100644
+--- a/config.py
++++ b/config.py
+@@ -9,6 +9,9 @@ class Config:
+         self.cookies = {}  # dict of name: value
+         self.org_id = ""
+         self.autostart = True
++        # TLS certificate checks for claude.ai. Only set "verify_tls": false in
++        # ~/.claude_meter.json if antivirus/proxy HTTPS inspection breaks connections.
++        self.verify_tls = True
+         self._load()
+ 
+     @property
+@@ -23,6 +26,7 @@ class Config:
+                 self.cookies = d.get("cookies", {})
+                 self.org_id = d.get("org_id", "")
+                 self.autostart = d.get("autostart", True)
++                self.verify_tls = d.get("verify_tls", True)
+             except:
+                 pass
+ 
+@@ -32,4 +36,5 @@ class Config:
+                 "cookies": self.cookies,
+                 "org_id": self.org_id,
+                 "autostart": self.autostart,
++                "verify_tls": self.verify_tls,
+             }, f)
+diff --git a/extension/background.js b/extension/background.js
+index dcd5bc2..846bf6d 100644
+--- a/extension/background.js
++++ b/extension/background.js
+@@ -49,7 +49,15 @@ function updateIcon(pct) {
+ 
+ // --- API ---
+ 
++const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++
+ async function getOrgId() {
++  // Org currently selected in claude.ai (matters for accounts with several orgs)
++  try {
++    const c = await chrome.cookies.get({ url: "https://claude.ai", name: "lastActiveOrg" });
++    if (c && UUID_RE.test(c.value)) return c.value;
++  } catch { /* fall through */ }
++
+   const data = await chrome.storage.local.get("orgId");
+   if (data.orgId) return data.orgId;
+ 
+@@ -59,8 +67,10 @@ async function getOrgId() {
+   });
+   if (resp.ok) {
+     const orgs = await resp.json();
+-    if (orgs && orgs.length > 0) {
+-      const orgId = orgs[0].uuid;
++    if (Array.isArray(orgs) && orgs.length > 0) {
++      // Prefer a claude.ai (chat) org over API-only orgs
++      const chat = orgs.find(o => Array.isArray(o.capabilities) && o.capabilities.includes("chat"));
++      const orgId = (chat || orgs[0]).uuid;
+       await chrome.storage.local.set({ orgId });
+       return orgId;
+     }
+@@ -162,10 +172,12 @@ async function sendKeyToTrayApp() {
+   try {
+     const cookie = await chrome.cookies.get({ url: "https://claude.ai", name: "sessionKey" });
+     if (cookie && cookie.value) {
++      let org = null;
++      try { org = await getOrgId(); } catch { /* tray app finds it itself */ }
+       await fetch("http://127.0.0.1:27182/auth", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+-        body: JSON.stringify({ sk: cookie.value })
++        body: JSON.stringify({ sk: cookie.value, org })
+       });
+     }
+   } catch (e) {
+@@ -184,7 +196,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
+ });
+ 
+ chrome.cookies.onChanged.addListener((info) => {
+-  if (info.cookie.name === "sessionKey" && info.cookie.domain.includes("claude.ai")) {
++  if (!info.cookie.domain.includes("claude.ai")) return;
++  if (info.cookie.name === "sessionKey" || info.cookie.name === "lastActiveOrg") {
+     setTimeout(fetchUsage, 2000);
+     if (!info.removed) sendKeyToTrayApp();
+   }
+diff --git a/extension/manifest.json b/extension/manifest.json
+index 6ec79ec..c90c527 100644
+--- a/extension/manifest.json
++++ b/extension/manifest.json
+@@ -2,7 +2,7 @@
+   "manifest_version": 3,
+   "name": "Claude Meter",
+   "description": "Shows your Claude.ai Pro usage percentage",
+-  "version": "1.3",
++  "version": "1.4",
+   "permissions": ["cookies", "alarms", "storage"],
+   "host_permissions": ["*://claude.ai/*", "http://127.0.0.1/*"],
+   "background": {
+diff --git a/install/README.txt b/install/README.txt
+index 7aab04c..7bdb85b 100644
+--- a/install/README.txt
++++ b/install/README.txt
+@@ -1 +1,2 @@
+-The installer exe (ClaudeMeter_Setup_v1.8.exe) will appear here after: installed_version.bat
++installed_version.bat builds ClaudeMeter_Setup_vX.Y.Z.exe here.
++The exe is not committed to git: upload it to a GitHub Release.
+diff --git a/installed_version.bat b/installed_version.bat
+index 4a73ab0..79d7f48 100644
+--- a/installed_version.bat
++++ b/installed_version.bat
+@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
+ cd /d "%~dp0"
+ title Claude Meter - Build Installer
+ 
+-set "VER=1.8"
++set "VER=1.9.0"
+ 
+ echo.
+ echo   Build Claude Meter v!VER! Setup.exe
+diff --git a/installer.iss b/installer.iss
+index 379d7dd..9fbd65c 100644
+--- a/installer.iss
++++ b/installer.iss
+@@ -41,4 +41,16 @@ Filename: "{cmd}"; Parameters: "/c ""{app}\engine.bat"" /S"; WorkingDir: "{app}"
+ Filename: "wscript.exe"; Parameters: """{localappdata}\ClaudeMeter\app\ClaudeMeter.vbs"""; Flags: nowait postinstall skipifsilent; Description: "Launch {#MyAppName}"
+ 
+ [UninstallRun]
+-Filename: "reg"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""ClaudeMeter"" /f"; Flags: runhidden
++; Stop the running tray app (pythonw running claude_meter.py only; other Python programs untouched).
++; "{{" is Inno Setup's escape for a literal "{".
++Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -in 'python.exe','pythonw.exe') -and ($_.CommandLine -like '*claude_meter.py*') } | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"""; Flags: runhidden waituntilterminated; RunOnceId: "StopApp"
++Filename: "reg"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""ClaudeMeter"" /f"; Flags: runhidden; RunOnceId: "RemoveAutostart"
++
++[UninstallDelete]
++; Created by engine.bat, not by [Files], so Inno would otherwise leave them behind.
++; Settings in %USERPROFILE%\.claude_meter.json are kept on purpose.
++Type: filesandordirs; Name: "{localappdata}\ClaudeMeter\app"
++Type: filesandordirs; Name: "{localappdata}\ClaudeMeter\python"
++Type: files; Name: "{userdesktop}\Claude Meter.lnk"
++Type: files; Name: "{userprograms}\Claude Meter.lnk"
++Type: dirifempty; Name: "{localappdata}\ClaudeMeter"
+diff --git a/portable/README.txt b/portable/README.txt
+index 94b13a3..b7a3149 100644
+--- a/portable/README.txt
++++ b/portable/README.txt
+@@ -1 +1,2 @@
+-The portable exe (ClaudeMeter_portable_v1.8.exe) will appear here after: portable_version.bat
++portable_version.bat builds ClaudeMeter_portable_vX.Y.Z.exe here.
++The exe is not committed to git: upload it to a GitHub Release.
+diff --git a/portable_version.bat b/portable_version.bat
+index 0e0f678..4270019 100644
+--- a/portable_version.bat
++++ b/portable_version.bat
+@@ -49,6 +49,7 @@ echo.
+   --enable-plugin=tk-inter ^
+   --include-package=curl_cffi ^
+   --include-package-data=curl_cffi ^
++  --include-package-data=certifi ^
+   --include-data-dir="%~dp0extension=extension" ^
+   --windows-icon-from-ico="%~dp0icon.ico" ^
+   --company-name="Stefan Savin" ^
+diff --git a/uninstall.bat b/uninstall.bat
+index 1e0adc3..fb01fbb 100644
+--- a/uninstall.bat
++++ b/uninstall.bat
+@@ -7,11 +7,18 @@ echo   This removes the app but KEEPS your settings and log.
+ echo.
+ pause
+ 
+-taskkill /f /im pythonw.exe 2>nul
+-taskkill /f /im python.exe 2>nul
+-taskkill /f /im ClaudeMeter.exe 2>nul
++:: Stop only Claude Meter: the portable exe, or python/pythonw running claude_meter.py.
++:: Other Python programs are left alone.
++powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like 'ClaudeMeter_portable*.exe') -or (($_.Name -in 'python.exe','pythonw.exe') -and ($_.CommandLine -like '*claude_meter.py*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+ timeout /t 2 /nobreak >nul
+ 
++:: Installed version: run the Inno Setup uninstaller so Windows "Apps" no longer lists it
++if exist "%LOCALAPPDATA%\ClaudeMeter\setup\unins000.exe" (
++    "%LOCALAPPDATA%\ClaudeMeter\setup\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
++    timeout /t 3 /nobreak >nul
++    echo   [OK] Ran installer's uninstaller
++)
++
+ if exist "%LOCALAPPDATA%\ClaudeMeter" (
+     rmdir /s /q "%LOCALAPPDATA%\ClaudeMeter" 2>nul
+     echo   [OK] Removed app folder

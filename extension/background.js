@@ -49,7 +49,15 @@ function updateIcon(pct) {
 
 // --- API ---
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function getOrgId() {
+  // Org currently selected in claude.ai (matters for accounts with several orgs)
+  try {
+    const c = await chrome.cookies.get({ url: "https://claude.ai", name: "lastActiveOrg" });
+    if (c && UUID_RE.test(c.value)) return c.value;
+  } catch { /* fall through */ }
+
   const data = await chrome.storage.local.get("orgId");
   if (data.orgId) return data.orgId;
 
@@ -59,8 +67,10 @@ async function getOrgId() {
   });
   if (resp.ok) {
     const orgs = await resp.json();
-    if (orgs && orgs.length > 0) {
-      const orgId = orgs[0].uuid;
+    if (Array.isArray(orgs) && orgs.length > 0) {
+      // Prefer a claude.ai (chat) org over API-only orgs
+      const chat = orgs.find(o => Array.isArray(o.capabilities) && o.capabilities.includes("chat"));
+      const orgId = (chat || orgs[0]).uuid;
       await chrome.storage.local.set({ orgId });
       return orgId;
     }
@@ -162,10 +172,12 @@ async function sendKeyToTrayApp() {
   try {
     const cookie = await chrome.cookies.get({ url: "https://claude.ai", name: "sessionKey" });
     if (cookie && cookie.value) {
+      let org = null;
+      try { org = await getOrgId(); } catch { /* tray app finds it itself */ }
       await fetch("http://127.0.0.1:27182/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sk: cookie.value })
+        body: JSON.stringify({ sk: cookie.value, org })
       });
     }
   } catch (e) {
@@ -184,7 +196,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.cookies.onChanged.addListener((info) => {
-  if (info.cookie.name === "sessionKey" && info.cookie.domain.includes("claude.ai")) {
+  if (!info.cookie.domain.includes("claude.ai")) return;
+  if (info.cookie.name === "sessionKey" || info.cookie.name === "lastActiveOrg") {
     setTimeout(fetchUsage, 2000);
     if (!info.removed) sendKeyToTrayApp();
   }

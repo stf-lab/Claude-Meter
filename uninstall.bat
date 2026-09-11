@@ -7,10 +7,17 @@ echo   This removes the app but KEEPS your settings and log.
 echo.
 pause
 
-taskkill /f /im pythonw.exe 2>nul
-taskkill /f /im python.exe 2>nul
-taskkill /f /im ClaudeMeter.exe 2>nul
+:: Stop only Claude Meter: the portable exe, or python/pythonw running claude_meter.py.
+:: Other Python programs are left alone.
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -like 'ClaudeMeter_portable*.exe') -or (($_.Name -in 'python.exe','pythonw.exe') -and ($_.CommandLine -like '*claude_meter.py*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 timeout /t 2 /nobreak >nul
+
+:: Installed version: run the Inno Setup uninstaller so Windows "Apps" no longer lists it
+if exist "%LOCALAPPDATA%\ClaudeMeter\setup\unins000.exe" (
+    "%LOCALAPPDATA%\ClaudeMeter\setup\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+    timeout /t 3 /nobreak >nul
+    echo   [OK] Ran installer's uninstaller
+)
 
 if exist "%LOCALAPPDATA%\ClaudeMeter" (
     rmdir /s /q "%LOCALAPPDATA%\ClaudeMeter" 2>nul

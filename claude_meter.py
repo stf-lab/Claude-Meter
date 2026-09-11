@@ -22,7 +22,7 @@ import pystray
 from PIL import Image, ImageDraw, ImageFont
 from curl_cffi import requests as cf_requests
 
-from browser import login_and_get_cookies, AuthServer
+from browser import login_and_get_cookies, AuthServer, _verify_key
 from config import Config
 
 logging.basicConfig(
@@ -52,20 +52,25 @@ class ClaudeMeter:
         self.auth_server = AuthServer(on_key_callback=self._on_auto_key)
         self.auth_server.start()
 
-    def _on_auto_key(self, sk):
-        """Called when extension sends a fresh sessionKey."""
-        log.info(f"Auto-key received ({len(sk)} chars)")
+    def _apply_login(self, cookies, org=""):
+        """Store a verified session and reset error state."""
+        self.config.cookies = cookies
+        self.config.org_id = org
+        self._org_id = org
+        self._fail_count = 0
+        self._session_expired_notified = False
+        self.config.save()
+
+    def _on_auto_key(self, sk, org=""):
+        """Called when extension sends a sessionKey (and the active org, if known)."""
+        # The extension re-sends every 2 minutes; skip if nothing changed.
+        if (self.config.cookies.get("sessionKey") == sk
+                and (not org or org == self._org_id) and self._fail_count == 0):
+            return
+        log.info(f"Auto-key received ({len(sk)} chars, org {'set' if org else 'not set'})")
         try:
-            test = cf_requests.get("https://claude.ai/api/organizations",
-                                   cookies={"sessionKey": sk}, impersonate="chrome",
-                                   timeout=10, verify=False)
-            if test.status_code == 200:
-                self.config.cookies = {"sessionKey": sk}
-                self.config.org_id = ""
-                self._org_id = ""
-                self._fail_count = 0
-                self._session_expired_notified = False
-                self.config.save()
+            if _verify_key(sk, self.config.verify_tls):
+                self._apply_login({"sessionKey": sk}, org)
                 log.info("Auto-key verified and saved")
                 self._start_polling()
                 threading.Thread(target=self._poll_once, daemon=True).start()
@@ -117,13 +122,22 @@ class ClaudeMeter:
                 f"https://claude.ai/api/{path}",
                 cookies=self.config.cookies,
                 impersonate="chrome",
-                verify=False,
+                verify=self.config.verify_tls,
                 timeout=15,
             )
             return {"status": r.status_code, "body": r.text}
         except Exception as e:
             log.info(f"API error: {e}")
             return None
+
+    @staticmethod
+    def _pick_org(orgs):
+        """Pick the claude.ai (chat) org; API-only orgs have no usage data.
+        The extension sends the active org when available, so this is the fallback."""
+        for o in orgs:
+            if isinstance(o, dict) and "chat" in (o.get("capabilities") or []):
+                return o.get("uuid", "")
+        return orgs[0].get("uuid", "") if isinstance(orgs[0], dict) else ""
 
     def _ensure_org_id(self):
         if self._org_id:
@@ -133,7 +147,7 @@ class ClaudeMeter:
             try:
                 orgs = json.loads(resp["body"])
                 if orgs and isinstance(orgs, list):
-                    self._org_id = orgs[0].get("uuid", "")
+                    self._org_id = self._pick_org(orgs)
                     self.config.org_id = self._org_id
                     self.config.save()
                     return self._org_id
@@ -275,15 +289,10 @@ class ClaudeMeter:
             for i in range(15):
                 if self.auth_server._server.session_key:
                     sk = self.auth_server._server.session_key
+                    org = self.auth_server._server.org_id
                     self.auth_server._server.session_key = None
-                    from browser import _verify_key
-                    if _verify_key(sk):
-                        self.config.cookies = {"sessionKey": sk}
-                        self.config.org_id = ""
-                        self._org_id = ""
-                        self._fail_count = 0
-                        self._session_expired_notified = False
-                        self.config.save()
+                    if _verify_key(sk, self.config.verify_tls):
+                        self._apply_login({"sessionKey": sk}, org)
                         log.info("Login via extension succeeded")
                         self._start_polling()
                         self._poll_once()
@@ -293,14 +302,10 @@ class ClaudeMeter:
             log.info("Extension didn't respond, showing dialog")
 
         # Fall back to dialog
-        cookies = login_and_get_cookies(auth_server=self.auth_server)
+        cookies, org = login_and_get_cookies(auth_server=self.auth_server,
+                                             verify=self.config.verify_tls)
         if cookies:
-            self.config.cookies = cookies
-            self.config.org_id = ""
-            self._org_id = ""
-            self._fail_count = 0
-            self._session_expired_notified = False
-            self.config.save()
+            self._apply_login(cookies, org)
             log.info(f"Login: saved {len(cookies)} cookies")
             self._start_polling()
             self._poll_once()
@@ -315,7 +320,8 @@ class ClaudeMeter:
         self._org_id = ""
         self.config.save()
         self.pct = -1
-        self._polling_started = False
+        # The poll loop keeps running and shows "Log in" until a new login;
+        # resetting _polling_started here started a second loop on re-login.
         self._set_status("Logged out")
         self._refresh()
 
@@ -327,6 +333,7 @@ class ClaudeMeter:
         lines.append(f"Cookies: {len(self.config.cookies)} cookies, sessionKey={'yes' if self.config.logged_in else 'no'}")
         lines.append(f"Org ID: {self._org_id or 'NOT SET'}")
         lines.append(f"Status: {self.status_text}")
+        lines.append(f"TLS verification: {'on' if self.config.verify_tls else 'OFF'}")
         lines.append("\n--- API test ---\n")
         resp = self._api_get("organizations")
         if resp:
@@ -336,8 +343,8 @@ class ClaudeMeter:
                 try:
                     orgs = json.loads(resp["body"])
                     if orgs:
-                        oid = orgs[0].get("uuid", "")
-                        lines.append(f"\nOrg: {oid}")
+                        oid = self._org_id or self._pick_org(orgs)
+                        lines.append(f"\nOrgs on account: {len(orgs)}, using: {oid}")
                         for ep in ["usage", "chat_conversations"]:
                             r2 = self._api_get(f"organizations/{oid}/{ep}")
                             if r2:

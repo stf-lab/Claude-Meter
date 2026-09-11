@@ -28,8 +28,8 @@
 | Version | Description | Download |
 |---------|-------------|----------|
 | **Browser extension** | Shows usage in browser toolbar | [Chrome Web Store](https://chromewebstore.google.com/detail/claude-meter/hdoipmanokibeilfnibempaiaeilkpfe) |
-| **Portable exe** | Single file, no install needed | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/portable) |
-| **Installer** | Full setup with auto-updates | [Download](https://github.com/stf-lab/Claude-Meter/tree/main/install) |
+| **Portable exe** | Single file, no install needed | [Latest release](https://github.com/stf-lab/Claude-Meter/releases/latest) |
+| **Installer** | Full setup; downloads Python if needed | [Latest release](https://github.com/stf-lab/Claude-Meter/releases/latest) |
 
 ## Quick Start
 
@@ -39,14 +39,14 @@
 3. Usage percentage appears on the extension icon
 
 ### Windows Tray App
-1. Download the latest `ClaudeMeter_portable_vX.X.X.exe` from [portable/](https://github.com/stf-lab/Claude-Meter/tree/main/portable)
+1. Download `ClaudeMeter_portable_vX.Y.Z.exe` from the [latest release](https://github.com/stf-lab/Claude-Meter/releases/latest)
 2. Place it in a permanent folder and run it
 3. Right-click tray icon > **Log in to Claude**
 4. Install the browser extension when prompted (for automatic login)
 5. Done. Starts with Windows automatically
 
 ### Installed Version
-1. Download the latest `ClaudeMeter_Setup_vX.X.X.exe` from [install/](https://github.com/stf-lab/Claude-Meter/tree/main/install)
+1. Download `ClaudeMeter_Setup_vX.Y.Z.exe` from the [latest release](https://github.com/stf-lab/Claude-Meter/releases/latest)
 2. Run the installer (downloads Python automatically if not installed)
 3. Right-click tray icon > **Log in to Claude**
 
@@ -55,7 +55,7 @@
 
 - The browser extension reads the `sessionKey` cookie from claude.ai and fetches usage data from the undocumented `/api/organizations/{id}/usage` endpoint
 - The tray app uses [curl_cffi](https://github.com/yifeikong/curl_cffi) to impersonate Chrome's TLS fingerprint, bypassing Cloudflare
-- The extension sends the sessionKey to the tray app via a local HTTP server on `127.0.0.1:27182`
+- The extension sends the sessionKey (and the organization selected in claude.ai) to the tray app via a local HTTP server on `127.0.0.1:27182`; the server only accepts requests from browser extensions
 - Session keys persist across restarts, lasting days to weeks
 
 
@@ -71,16 +71,21 @@ Requires [Inno Setup 7](https://jrsoftware.org/isinfo.php):
 ```
 installed_version.bat
 ```
-Creates `install\ClaudeMeter_Setup_vX.X.X.exe`
+Creates `install\ClaudeMeter_Setup_vX.Y.Z.exe`
 
 ### Build the Portable Exe
 Requires a C compiler (MSVC recommended):
 ```
 portable_version.bat
 ```
-Creates `portable\ClaudeMeter_portable_vX.X.X.exe`
+Creates `portable\ClaudeMeter_portable_vX.Y.Z.exe`
 
 Best run from the "x64 Native Tools Command Prompt for VS 2022" for MSVC. Nuitka downloads its own compiler if MSVC is not found.
+
+### Publishing a Release
+The built exes are not committed to git. After building both:
+1. Create a GitHub Release tagged `vX.Y.Z`
+2. Attach `install\ClaudeMeter_Setup_vX.Y.Z.exe` and `portable\ClaudeMeter_portable_vX.Y.Z.exe`
 
 
 ## Project Structure
@@ -96,6 +101,7 @@ extension/           Browser extension source
   background.js      Polls usage, updates icon, sends key to tray app
   popup.html/js      Extension popup with progress bar
   manifest.json      Extension manifest (MV3)
+  icons/             Static extension icons (16, 48, 128 px)
 engine.bat           Install engine (called by installer, not run directly)
 installed_version.bat  Build the installer Setup.exe
 portable_version.bat   Build the portable single exe
@@ -106,7 +112,7 @@ installer.iss        Inno Setup script
 
 ## Privacy
 
-- Only communicates with claude.ai
+- The app and extension only communicate with claude.ai (the installer also downloads Python and packages from python.org and PyPI when needed)
 - Session key stored locally (`~/.claude_meter.json`)
 - Local auth server listens only on 127.0.0.1 (not accessible from the network)
 - No data collected, no analytics, no tracking
@@ -114,7 +120,7 @@ installer.iss        Inno Setup script
 
 ## Windows SmartScreen / Antivirus
 
-Unsigned executables trigger SmartScreen on first run: click "More info" > "Run anyway". This is normal for unsigned software. Code signing via [SignPath](https://signpath.io) is planned.
+Unsigned executables trigger SmartScreen on first run: click "More info" > "Run anyway". This is normal for unsigned software. An application for free open-source code signing through [SignPath](https://signpath.io) has been submitted.
 
 
 ## License

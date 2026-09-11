@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title Claude Meter - Build Installer
 
-set "VER=1.8"
+set "VER=1.9.0"
 
 echo.
 echo   Build Claude Meter v!VER! Setup.exe

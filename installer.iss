@@ -41,4 +41,16 @@ Filename: "{cmd}"; Parameters: "/c ""{app}\engine.bat"" /S"; WorkingDir: "{app}"
 Filename: "wscript.exe"; Parameters: """{localappdata}\ClaudeMeter\app\ClaudeMeter.vbs"""; Flags: nowait postinstall skipifsilent; Description: "Launch {#MyAppName}"
 
 [UninstallRun]
-Filename: "reg"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""ClaudeMeter"" /f"; Flags: runhidden
+; Stop the running tray app (pythonw running claude_meter.py only; other Python programs untouched).
+; "{{" is Inno Setup's escape for a literal "{".
+Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-CimInstance Win32_Process | Where-Object {{ ($_.Name -in 'python.exe','pythonw.exe') -and ($_.CommandLine -like '*claude_meter.py*') } | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"""; Flags: runhidden waituntilterminated; RunOnceId: "StopApp"
+Filename: "reg"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""ClaudeMeter"" /f"; Flags: runhidden; RunOnceId: "RemoveAutostart"
+
+[UninstallDelete]
+; Created by engine.bat, not by [Files], so Inno would otherwise leave them behind.
+; Settings in %USERPROFILE%\.claude_meter.json are kept on purpose.
+Type: filesandordirs; Name: "{localappdata}\ClaudeMeter\app"
+Type: filesandordirs; Name: "{localappdata}\ClaudeMeter\python"
+Type: files; Name: "{userdesktop}\Claude Meter.lnk"
+Type: files; Name: "{userprograms}\Claude Meter.lnk"
+Type: dirifempty; Name: "{localappdata}\ClaudeMeter"

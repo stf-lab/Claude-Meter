@@ -15,6 +15,10 @@ build_nuitka/
 # Inno Setup output
 Output/
 
+# Release binaries: published on GitHub Releases, not committed
+install/*.exe
+portable/*.exe
+
 # User config
 .claude_meter.json
 .claude_meter.log

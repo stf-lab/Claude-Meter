@@ -1,1 +1,2 @@
-The installer exe (ClaudeMeter_Setup_v1.8.exe) will appear here after: installed_version.bat
+installed_version.bat builds ClaudeMeter_Setup_vX.Y.Z.exe here.
+The exe is not committed to git: upload it to a GitHub Release.

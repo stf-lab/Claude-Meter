@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Claude Meter",
   "description": "Shows your Claude.ai Pro usage percentage",
-  "version": "1.3",
+  "version": "1.4",
   "permissions": ["cookies", "alarms", "storage"],
   "host_permissions": ["*://claude.ai/*", "http://127.0.0.1/*"],
   "background": {

@@ -9,6 +9,9 @@ class Config:
         self.cookies = {}  # dict of name: value
         self.org_id = ""
         self.autostart = True
+        # TLS certificate checks for claude.ai. Only set "verify_tls": false in
+        # ~/.claude_meter.json if antivirus/proxy HTTPS inspection breaks connections.
+        self.verify_tls = True
         self._load()
 
     @property
@@ -23,6 +26,7 @@ class Config:
                 self.cookies = d.get("cookies", {})
                 self.org_id = d.get("org_id", "")
                 self.autostart = d.get("autostart", True)
+                self.verify_tls = d.get("verify_tls", True)
             except:
                 pass
 
@@ -32,4 +36,5 @@ class Config:
                 "cookies": self.cookies,
                 "org_id": self.org_id,
                 "autostart": self.autostart,
+                "verify_tls": self.verify_tls,
             }, f)
