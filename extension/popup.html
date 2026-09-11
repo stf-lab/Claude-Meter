@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body {
+    width: 260px;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    padding: 14px;
+    color: #333;
+    background: #fff;
+  }
+  h2 {
+    margin: 0 0 10px;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .meter {
+    background: #e8e8e8;
+    border-radius: 8px;
+    height: 18px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .meter-fill {
+    height: 100%;
+    border-radius: 8px;
+    transition: width 0.3s;
+    min-width: 2px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 3px 0;
+    color: #555;
+  }
+  .row .val {
+    font-weight: 600;
+    color: #222;
+  }
+  .divider {
+    border-top: 1px solid #eee;
+    margin: 8px 0;
+  }
+  .status {
+    font-size: 11px;
+    color: #999;
+    text-align: center;
+    margin-top: 6px;
+  }
+  .refresh-btn {
+    display: block;
+    margin: 8px auto 0;
+    padding: 4px 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f8f8f8;
+    cursor: pointer;
+    font-size: 11px;
+    color: #555;
+  }
+  .refresh-btn:hover {
+    background: #eee;
+  }
+  .logo {
+    width: 22px;
+    height: 22px;
+  }
+</style>
+</head>
+<body>
+  <h2><svg class="logo" viewBox="0 0 200 200"><circle cx="100" cy="100" r="98" fill="#D97757"/><path d="m 33.6,151.7 a 84.5,84.5 0 1 1 132.8,0" fill="none" stroke="#fff" stroke-width="8.4" stroke-linecap="round"/><line x1="100" y1="100" x2="62" y2="58" stroke="#fff" stroke-width="5" stroke-linecap="round"/><circle cx="99" cy="99" r="15" fill="#fff"/></svg> Claude Meter</h2>
+  <div class="meter"><div class="meter-fill" id="meter5h"></div></div>
+  <div class="row"><span>5-hour usage</span><span class="val" id="pct5">—</span></div>
+  <div class="row"><span>7-day usage</span><span class="val" id="pct7">—</span></div>
+  <div class="divider"></div>
+  <div class="row"><span>Resets in</span><span class="val" id="reset">—</span></div>
+  <button class="refresh-btn" id="refreshBtn">Refresh</button>
+  <div class="status" id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

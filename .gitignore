@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.spec
+
+#backup
+backup/
+
+# Nuitka build
+build_nuitka/
+
+# Inno Setup output
+Output/
+
+# Built outputs (don't commit binaries)
+install/*.exe
+portable/*.exe
+
+# User config
+.claude_meter.json
+.claude_meter.log
+claude_meter_diagnostics.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
